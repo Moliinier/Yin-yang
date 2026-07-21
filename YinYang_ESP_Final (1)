@@ -1,0 +1,770 @@
+--[[
+    ======================================================================
+    YIN YANG v23 - Script ESP Completo
+    ======================================================================
+    Funcionalidades:
+      - ESP Player (BillboardGui - FUNCIONA EN EVADE)
+      - Jump Power (Barra con botones +/−)
+      - Teleport Walk Speed (Barra con botones +/−)
+      - Full Bright
+      - Instant Revive
+      - Revive Aura
+      - Auto Carry
+      - Auto Spawn
+      - TODOS los temas de color
+    ======================================================================
+]]
+
+--// CARGAR LA LIBRERÍA YIN-YANG v23 COMPLETO
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Moliinier/Yin-yang/refs/heads/main/Yin_Yang_v23_COMPLETO.lua"))()
+
+--// REFERENCIAS
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+local LocalPlayer = Players.LocalPlayer
+local CoreGui = game:GetService("CoreGui")
+
+--// ACCEDER A LA LIBRERÍA GLOBALMENTE
+local YinYang = _G.YinYang
+
+if not YinYang then
+    warn("❌ Error: YinYang no está disponible en _G")
+    return
+end
+
+--======================================================================
+--  ESTADO DE LAS OPCIONES
+--======================================================================
+
+local ESPEnabled = false
+local ESPBillboards = {}
+
+local JumpPowerEnabled = false
+local JumpPowerValue = 50
+
+local TeleportWalkEnabled = false
+local TeleportWalkValue = 50
+
+local FullBrightEnabled = false
+local OriginalBrightness = Lighting.ExposureCompensation
+local OriginalAmbient = Lighting.Ambient
+
+local InstantReviveEnabled = false
+local ReviveAuraEnabled = false
+local AutoCarryEnabled = false
+local AutoSpawnEnabled = false
+
+--======================================================================
+--  ESP PLAYER - BillboardGui (FUNCIONA EN CUALQUIER JUEGO INCLUIDO EVADE)
+--======================================================================
+
+local function createESP(player)
+    if player == LocalPlayer then return end
+    
+    local character = player.Character
+    if not character then return end
+    
+    local head = character:FindFirstChild("Head")
+    if not head then
+        -- Si no tiene Head, buscar el HumanoidRootPart
+        head = character:FindFirstChild("HumanoidRootPart")
+        if not head then return end
+    end
+    
+    -- Crear BillboardGui
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "YinYangESP_" .. player.Name
+    billboard.AlwaysOnTop = true
+    billboard.Size = UDim2.new(0, 200, 0, 60)
+    billboard.StudsOffset = Vector3.new(0, 3, 0)
+    billboard.Adornee = head
+    billboard.Parent = head
+    
+    -- Etiqueta del nombre
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Name = "NameLabel"
+    nameLabel.Text = player.Name
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.TextSize = 16
+    nameLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
+    nameLabel.TextStrokeTransparency = 0
+    nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    nameLabel.Parent = billboard
+    
+    -- Etiqueta de distancia
+    local distLabel = Instance.new("TextLabel")
+    distLabel.Name = "DistLabel"
+    distLabel.Text = ""
+    distLabel.Font = Enum.Font.Gotham
+    distLabel.TextSize = 13
+    distLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    distLabel.TextStrokeTransparency = 0
+    distLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    distLabel.BackgroundTransparency = 1
+    distLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    distLabel.Position = UDim2.new(0, 0, 0.5, 0)
+    distLabel.Parent = billboard
+    
+    ESPBillboards[player] = {Billboard = billboard, NameLabel = nameLabel, DistLabel = distLabel}
+    
+    -- Conectar CharacterAdded
+    local conn = player.CharacterAdded:Connect(function(newChar)
+        task.wait(0.5)
+        -- Destruir billboard anterior
+        if ESPBillboards[player] then
+            ESPBillboards[player].Billboard:Destroy()
+            ESPBillboards[player] = nil
+        end
+        createESP(player)
+    end)
+    
+    ESPBillboards[player].Conn = conn
+end
+
+local function updateESPDistances()
+    if not ESPEnabled then return end
+    local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
+    
+    for player, data in pairs(ESPBillboards) do
+        if player and player.Character then
+            local theirRoot = player.Character:FindFirstChild("HumanoidRootPart")
+            if theirRoot and data.DistLabel then
+                local dist = (myRoot.Position - theirRoot.Position).Magnitude
+                data.DistLabel.Text = "📏 " .. math.floor(dist) .. " studs"
+                
+                -- Color según distancia
+                if dist <= 20 then
+                    data.DistLabel.TextColor3 = Color3.fromRGB(0, 255, 100) -- Verde (cerca)
+                elseif dist <= 50 then
+                    data.DistLabel.TextColor3 = Color3.fromRGB(255, 255, 0) -- Amarillo (medio)
+                else
+                    data.DistLabel.TextColor3 = Color3.fromRGB(255, 100, 100) -- Rojo (lejos)
+                end
+            end
+        end
+    end
+end
+
+local function enableESP()
+    ESPEnabled = true
+    
+    -- Crear ESP para todos los jugadores existentes
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            createESP(player)
+        end
+    end
+    
+    -- Conectar nuevos jugadores
+    ESPBillboards._PlayerAdded = Players.PlayerAdded:Connect(function(player)
+        task.wait(1)
+        if ESPEnabled and player ~= LocalPlayer then
+            createESP(player)
+        end
+    end)
+    
+    -- Conectar jugadores que salen
+    ESPBillboards._PlayerRemoving = Players.PlayerRemoving:Connect(function(player)
+        if ESPBillboards[player] then
+            ESPBillboards[player].Billboard:Destroy()
+            ESPBillboards[player] = nil
+        end
+    end)
+    
+    -- Actualizar distancias cada frame
+    ESPBillboards._Heartbeat = RunService.Heartbeat:Connect(updateESPDistances)
+end
+
+local function disableESP()
+    ESPEnabled = false
+    
+    -- Destruir todos los billboards
+    for player, data in pairs(ESPBillboards) do
+        if typeof(player) == "userdata" and player:IsA("Player") then
+            data.Billboard:Destroy()
+            if data.Conn then data.Conn:Disconnect() end
+            ESPBillboards[player] = nil
+        end
+    end
+    
+    -- Desconectar eventos
+    if ESPBillboards._PlayerAdded then ESPBillboards._PlayerAdded:Disconnect() end
+    if ESPBillboards._PlayerRemoving then ESPBillboards._PlayerRemoving:Disconnect() end
+    if ESPBillboards._Heartbeat then ESPBillboards._Heartbeat:Disconnect() end
+    ESPBillboards = {}
+end
+
+--======================================================================
+--  JUMP POWER
+--======================================================================
+
+local JumpPowerConnections = {}
+
+local function enableJumpPower()
+    JumpPowerEnabled = true
+    
+    -- Aplicar inmediatamente
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.JumpPower = JumpPowerValue
+            hum.UseJumpPower = true
+        end
+    end
+    
+    -- Monitorear nuevos personajes
+    JumpPowerConnections.CharacterAdded = LocalPlayer.CharacterAdded:Connect(function(character)
+        task.wait(0.3)
+        if JumpPowerEnabled then
+            local hum = character:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum.JumpPower = JumpPowerValue
+                hum.UseJumpPower = true
+            end
+        end
+    end)
+    
+    -- Forzar constantemente
+    JumpPowerConnections.Heartbeat = RunService.Heartbeat:Connect(function()
+        if JumpPowerEnabled and LocalPlayer.Character then
+            local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if hum and (hum.JumpPower ~= JumpPowerValue or not hum.UseJumpPower) then
+                hum.JumpPower = JumpPowerValue
+                hum.UseJumpPower = true
+            end
+        end
+    end)
+end
+
+local function disableJumpPower()
+    JumpPowerEnabled = false
+    
+    for _, conn in pairs(JumpPowerConnections) do
+        if conn then pcall(function() conn:Disconnect() end) end
+    end
+    JumpPowerConnections = {}
+end
+
+local function setJumpPowerLabel(tab)
+    tab.JPLabel.Text = "🦘 Jump Power: " .. JumpPowerValue
+end
+
+--======================================================================
+--  TELEPORT WALK SPEED
+--======================================================================
+
+local TeleportWalkConnections = {}
+
+local function enableTeleportWalk()
+    TeleportWalkEnabled = true
+    
+    -- Aplicar inmediatamente
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.WalkSpeed = TeleportWalkValue
+        end
+    end
+    
+    -- Monitorear nuevos personajes
+    TeleportWalkConnections.CharacterAdded = LocalPlayer.CharacterAdded:Connect(function(character)
+        task.wait(0.3)
+        if TeleportWalkEnabled then
+            local hum = character:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum.WalkSpeed = TeleportWalkValue
+            end
+        end
+    end)
+    
+    -- Forzar constantemente (esto es lo que hace que funcione como Teleport Walk)
+    TeleportWalkConnections.Heartbeat = RunService.Heartbeat:Connect(function()
+        if TeleportWalkEnabled and LocalPlayer.Character then
+            local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if hum and hum.WalkSpeed ~= TeleportWalkValue then
+                hum.WalkSpeed = TeleportWalkValue
+            end
+        end
+    end)
+end
+
+local function disableTeleportWalk()
+    TeleportWalkEnabled = false
+    
+    for _, conn in pairs(TeleportWalkConnections) do
+        if conn then pcall(function() conn:Disconnect() end) end
+    end
+    TeleportWalkConnections = {}
+    
+    -- Restaurar velocidad normal
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.WalkSpeed = 16
+        end
+    end
+end
+
+--======================================================================
+--  FULL BRIGHT
+--======================================================================
+
+local function enableFullBright()
+    FullBrightEnabled = true
+    Lighting.ExposureCompensation = 2
+    Lighting.Ambient = Color3.fromRGB(200, 200, 200)
+    Lighting.Brightness = 2
+    
+    if Lighting:FindFirstChild("Atmosphere") then
+        Lighting:FindFirstChild("Atmosphere").Density = 0
+        Lighting:FindFirstChild("Atmosphere").Haze = 0
+        Lighting:FindFirstChild("Atmosphere").Glare = 0
+    end
+    
+    for _, effect in ipairs(Lighting:GetChildren()) do
+        if effect:IsA("ColorCorrectionEffect") then
+            effect.Brightness = 1
+        end
+    end
+end
+
+local function disableFullBright()
+    FullBrightEnabled = false
+    Lighting.ExposureCompensation = OriginalBrightness
+    Lighting.Ambient = OriginalAmbient
+    Lighting.Brightness = 0
+    
+    if Lighting:FindFirstChild("Atmosphere") then
+        Lighting:FindFirstChild("Atmosphere").Density = 0.35
+        Lighting:FindFirstChild("Atmosphere").Haze = 0.5
+        Lighting:FindFirstChild("Atmosphere").Glare = 0
+    end
+    
+    for _, effect in ipairs(Lighting:GetChildren()) do
+        if effect:IsA("ColorCorrectionEffect") then
+            effect.Brightness = 0
+        end
+    end
+end
+
+--======================================================================
+--  INSTANT REVIVE
+--======================================================================
+
+local ReviveConnection = nil
+
+local function enableInstantRevive()
+    InstantReviveEnabled = true
+    
+    if ReviveConnection then ReviveConnection:Disconnect() end
+    
+    ReviveConnection = LocalPlayer.CharacterAdded:Connect(function(character)
+        task.wait(0.1)
+        if InstantReviveEnabled then
+            local humanoid = character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.Health = humanoid.MaxHealth
+            end
+        end
+    end)
+end
+
+local function disableInstantRevive()
+    InstantReviveEnabled = false
+    if ReviveConnection then
+        ReviveConnection:Disconnect()
+        ReviveConnection = nil
+    end
+end
+
+--======================================================================
+--  REVIVE AURA
+--======================================================================
+
+local AuraConnection = nil
+
+local function enableReviveAura()
+    ReviveAuraEnabled = true
+    
+    if AuraConnection then AuraConnection:Disconnect() end
+    
+    AuraConnection = RunService.Heartbeat:Connect(function()
+        if not ReviveAuraEnabled then return end
+        if not LocalPlayer.Character then return end
+        local myRoot = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not myRoot then return end
+        
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+                local theirRoot = player.Character:FindFirstChild("HumanoidRootPart")
+                
+                if humanoid and theirRoot then
+                    local dist = (myRoot.Position - theirRoot.Position).Magnitude
+                    if dist <= 15 then
+                        -- Revivir si tiene poca vida o está caído
+                        if humanoid.Health > 0 and humanoid.Health < humanoid.MaxHealth * 0.5 then
+                            humanoid.Health = humanoid.MaxHealth
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+local function disableReviveAura()
+    ReviveAuraEnabled = false
+    if AuraConnection then
+        AuraConnection:Disconnect()
+        AuraConnection = nil
+    end
+end
+
+--======================================================================
+--  AUTO CARRY
+--======================================================================
+
+local CarryConnection = nil
+
+local function enableAutoCarry()
+    AutoCarryEnabled = true
+    
+    if CarryConnection then CarryConnection:Disconnect() end
+    
+    CarryConnection = RunService.Heartbeat:Connect(function()
+        if not AutoCarryEnabled then return end
+        if not LocalPlayer.Character then return end
+        local myRoot = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not myRoot then return end
+        
+        local myHumanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if not myHumanoid or myHumanoid.Health <= 0 then return end
+        
+        local closestDowned = nil
+        local closestDist = math.huge
+        
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+                local theirRoot = player.Character:FindFirstChild("HumanoidRootPart")
+                
+                if humanoid and theirRoot and humanoid.Health > 0 then
+                    local dist = (myRoot.Position - theirRoot.Position).Magnitude
+                    
+                    -- Detectar si está caído/downed
+                    local isDowned = false
+                    
+                    -- Método 1: Health muy baja
+                    if humanoid.Health <= humanoid.MaxHealth * 0.1 then
+                        isDowned = true
+                    end
+                    
+                    -- Método 2: Estado Ragdoll/FallingDown
+                    local state = humanoid:GetState()
+                    if state == Enum.HumanoidStateType.Ragdoll or 
+                       state == Enum.HumanoidStateType.Physics or 
+                       state == Enum.HumanoidStateType.FallingDown or
+                       state == Enum.HumanoidStateType.Seated then
+                        isDowned = true
+                    end
+                    
+                    -- Método 3: Buscar indicador en el personaje (común en Evade)
+                    if player.Character:FindFirstChild("Downed") or 
+                       player.Character:FindFirstChild("Stunned") or
+                       player.Character:FindFirstChild("IsDowned") or
+                       player.Character:FindFirstChild("Carrying") then
+                        isDowned = true
+                    end
+                    
+                    if isDowned and dist < closestDist then
+                        closestDist = dist
+                        closestDowned = theirRoot
+                    end
+                end
+            end
+        end
+        
+        if closestDowned and closestDist <= 30 then
+            -- Moverse hacia el jugador caído
+            myHumanoid:MoveTo(closestDowned.Position)
+        end
+    end)
+end
+
+local function disableAutoCarry()
+    AutoCarryEnabled = false
+    if CarryConnection then
+        CarryConnection:Disconnect()
+        CarryConnection = nil
+    end
+end
+
+--======================================================================
+--  AUTO SPAWN (Auto Respawn)
+--======================================================================
+
+local SpawnConnection = nil
+
+local function enableAutoSpawn()
+    AutoSpawnEnabled = true
+    
+    if SpawnConnection then SpawnConnection:Disconnect() end
+    
+    SpawnConnection = RunService.Heartbeat:Connect(function()
+        if not AutoSpawnEnabled then return end
+        
+        local character = LocalPlayer.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        
+        if humanoid and humanoid.Health <= 0 then
+            -- Forzar respawn inmediato
+            task.wait(0.5)
+            LocalPlayer:LoadCharacter()
+        end
+    end)
+end
+
+local function disableAutoSpawn()
+    AutoSpawnEnabled = false
+    if SpawnConnection then
+        SpawnConnection:Disconnect()
+        SpawnConnection = nil
+    end
+end
+
+--======================================================================
+--  CREAR LA UI CON YIN-YANG v23
+--======================================================================
+
+print("🎮 Yin Yang v23 COMPLETO - Script Cargado...")
+
+local UI = YinYang:CreateWindow("Yin Yang", "DarkV2")
+
+--// La v23 ya tiene la pestaña INICIO fija con CreateWelcomeCard y CreateServerInfoCard
+
+--// TAB: ESP PLAYERS
+local TabESP = UI:CreateTab("ESP")
+TabESP:CreateLabel("⚡ ESP Player", 16)
+TabESP:CreateDivider()
+TabESP:CreateLabel("BillboardGui - Funciona en todos los juegos", 11)
+TabESP:CreateDivider()
+
+TabESP:CreateToggle("Activar ESP", false, function(state)
+    if state then
+        enableESP()
+        print("✅ ESP Activado")
+    else
+        disableESP()
+        print("❌ ESP Desactivado")
+    end
+end)
+
+--// TAB: MOVIMIENTO
+local TabMove = UI:CreateTab("Movimiento")
+TabMove:CreateLabel("🏃 Movimiento", 16)
+TabMove:CreateDivider()
+
+-- Jump Power
+TabMove:CreateToggle("Enable Jump Power", false, function(state)
+    if state then
+        enableJumpPower()
+        print("✅ Jump Power Activado: " .. JumpPowerValue)
+    else
+        disableJumpPower()
+        print("❌ Jump Power Desactivado")
+    end
+end)
+
+TabMove:CreateLabel("  ", 6)
+
+TabMove:CreateButton("🦘 Jump Power: +5", function()
+    JumpPowerValue = math.min(JumpPowerValue + 5, 200)
+    print("🔼 Jump Power: " .. JumpPowerValue)
+    if JumpPowerEnabled then
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.JumpPower = JumpPowerValue; hum.UseJumpPower = true end
+        end
+    end
+end)
+
+TabMove:CreateButton("🦘 Jump Power: -5", function()
+    JumpPowerValue = math.max(JumpPowerValue - 5, 0)
+    print("🔽 Jump Power: " .. JumpPowerValue)
+    if JumpPowerEnabled then
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.JumpPower = JumpPowerValue; hum.UseJumpPower = true end
+        end
+    end
+end)
+
+TabMove:CreateLabel("Valor actual: " .. JumpPowerValue, 12)
+
+TabMove:CreateDivider()
+
+-- Walk Speed Teleport
+TabMove:CreateToggle("Enable Teleport Walk", false, function(state)
+    if state then
+        enableTeleportWalk()
+        print("✅ Teleport Walk Activado: " .. TeleportWalkValue)
+    else
+        disableTeleportWalk()
+        print("❌ Teleport Walk Desactivado")
+    end
+end)
+
+TabMove:CreateLabel("  ", 6)
+
+TabMove:CreateButton("🏃 Walk Speed: +5", function()
+    TeleportWalkValue = math.min(TeleportWalkValue + 5, 200)
+    print("🔼 Walk Speed: " .. TeleportWalkValue)
+    if TeleportWalkEnabled then
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.WalkSpeed = TeleportWalkValue end
+        end
+    end
+end)
+
+TabMove:CreateButton("🏃 Walk Speed: -5", function()
+    TeleportWalkValue = math.max(TeleportWalkValue - 5, 16)
+    print("🔽 Walk Speed: " .. TeleportWalkValue)
+    if TeleportWalkEnabled then
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.WalkSpeed = TeleportWalkValue end
+        end
+    end
+end)
+
+TabMove:CreateLabel("Valor actual: " .. TeleportWalkValue, 12)
+
+TabMove:CreateDivider()
+TabMove:CreateLabel("💡 Tips:", 11)
+TabMove:CreateLabel("• Teleport Walk usa Heartbeat para forzar la velocidad", 10)
+TabMove:CreateLabel("  constantemente, así no la pierdes nunca", 10)
+
+--// TAB: VISUAL
+local TabVisual = UI:CreateTab("Visual")
+TabVisual:CreateLabel("👁️ Efectos Visuales", 16)
+TabVisual:CreateDivider()
+
+TabVisual:CreateToggle("Full Bright", false, function(state)
+    if state then
+        enableFullBright()
+        print("✅ Full Bright Activado")
+    else
+        disableFullBright()
+        print("❌ Full Bright Desactivado")
+    end
+end)
+
+--// TAB: REVIVE
+local TabRevive = UI:CreateTab("Revive")
+TabRevive:CreateLabel("💀 Sistema de Revive", 16)
+TabRevive:CreateDivider()
+
+TabRevive:CreateToggle("Instant Revive", false, function(state)
+    if state then
+        enableInstantRevive()
+        print("✅ Instant Revive Activado")
+    else
+        disableInstantRevive()
+        print("❌ Instant Revive Desactivado")
+    end
+end)
+
+TabRevive:CreateDivider()
+
+TabRevive:CreateToggle("Revive Aura (15 studs)", false, function(state)
+    if state then
+        enableReviveAura()
+        print("✅ Revive Aura Activado")
+    else
+        disableReviveAura()
+        print("❌ Revive Aura Desactivado")
+    end
+end)
+
+TabRevive:CreateDivider()
+
+TabRevive:CreateToggle("Auto Carry", false, function(state)
+    if state then
+        enableAutoCarry()
+        print("✅ Auto Carry Activado")
+    else
+        disableAutoCarry()
+        print("❌ Auto Carry Desactivado")
+    end
+end)
+
+TabRevive:CreateDivider()
+
+TabRevive:CreateToggle("Auto Spawn (Auto Respawn)", false, function(state)
+    if state then
+        enableAutoSpawn()
+        print("✅ Auto Spawn Activado")
+    else
+        disableAutoSpawn()
+        print("❌ Auto Spawn Desactivado")
+    end
+end)
+
+TabRevive:CreateDivider()
+TabRevive:CreateLabel("📝 Notas:", 11)
+TabRevive:CreateLabel("• Instant Revive: Te revive al instante al caer", 10)
+TabRevive:CreateLabel("• Revive Aura: Revive jugadores en 15 studs", 10)
+TabRevive:CreateLabel("• Auto Carry: Camina hacia jugadores caídos", 10)
+TabRevive:CreateLabel("• Auto Spawn: Respawn automático al morir", 10)
+
+--// TAB: TEMAS
+local TabThemes = UI:CreateTab("Temas")
+TabThemes:CreateLabel("🎨 Temas de Color", 16)
+TabThemes:CreateDivider()
+
+TabThemes:CreateLabel("Temas Oscuros:", 13)
+TabThemes:CreateButton("Dark", function() UI:SetTheme("Dark") end)
+TabThemes:CreateButton("DarkV2", function() UI:SetTheme("DarkV2") end)
+TabThemes:CreateButton("WhiteAndDark", function() UI:SetTheme("WhiteAndDark") end)
+
+TabThemes:CreateDivider()
+TabThemes:CreateLabel("Temas de Color:", 13)
+TabThemes:CreateButton("Purple", function() UI:SetTheme("Purple") end)
+TabThemes:CreateButton("Blue", function() UI:SetTheme("Blue") end)
+TabThemes:CreateButton("BlueV2", function() UI:SetTheme("BlueV2") end)
+TabThemes:CreateButton("Red", function() UI:SetTheme("Red") end)
+TabThemes:CreateButton("RedV2", function() UI:SetTheme("RedV2") end)
+TabThemes:CreateButton("Orange", function() UI:SetTheme("Orange") end)
+TabThemes:CreateButton("Pink", function() UI:SetTheme("Pink") end)
+TabThemes:CreateButton("PinkV2", function() UI:SetTheme("PinkV2") end)
+TabThemes:CreateButton("PinkV3", function() UI:SetTheme("PinkV3") end)
+TabThemes:CreateButton("Green", function() UI:SetTheme("Green") end)
+
+TabThemes:CreateDivider()
+TabThemes:CreateLabel("Temas Claros:", 13)
+TabThemes:CreateButton("Light", function() UI:SetTheme("Light") end)
+TabThemes:CreateButton("WhiteV2", function() UI:SetTheme("WhiteV2") end)
+TabThemes:CreateButton("WhiteV3", function() UI:SetTheme("WhiteV3") end)
+
+TabThemes:CreateDivider()
+TabThemes:CreateLabel("Efectos de Texto:", 13)
+TabThemes:CreateButton("WhiteCyan", function() UI:SetTextEffect("WhiteCyan") end)
+TabThemes:CreateButton("WhitePink", function() UI:SetTextEffect("WhitePink") end)
+TabThemes:CreateButton("Rainbow", function() UI:SetTextEffect("Rainbow") end)
+TabThemes:CreateButton("Desactivar Efecto", function() UI:SetTextEffect("Off") end)
+
+print("✅ Yin Yang v23 COMPLETO - ¡Script listo!")
+print("   Tabs: INICIO (fija) | ESP | Movimiento | Visual | Revive | Temas")
