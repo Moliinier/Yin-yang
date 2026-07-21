@@ -1,17 +1,50 @@
 --[[
-    ✅ SCRIPT EVADE CON ESP + YIN YANG v23
-    Carga la librería desde GitHub y agrega ESP funcional
-    Probado en: Evade (Roblox)
+    ✅ SCRIPT EVADE CON ESP + YIN YANG v23 - FIXED
+    Fix para: attempt to call a nil value
 ]]
 
 --// ════════════════════════════════════════════════════════════
---// 1. CARGAR LIBRERÍA YIN YANG DESDE GITHUB
+--// 1. CARGAR LIBRERÍA YIN YANG DESDE GITHUB (FIX COMPATIBILIDAD)
 --// ════════════════════════════════════════════════════════════
+
+local function httpGet(url)
+    -- Prueba todos los métodos según tu executor (Delta, Arceus, Fluxus, etc)
+    local ok, res
+    
+    -- Método 1: game:HttpGet (el más común)
+    ok, res = pcall(function() return game:HttpGet(url) end)
+    if ok and res and res ~= "" then return res end
+    
+    ok, res = pcall(function() return game:HttpGet(game, url) end)
+    if ok and res and res ~= "" then return res end
+
+    -- Método 2: HttpService
+    ok, res = pcall(function() 
+        return game:GetService("HttpService"):GetAsync(url) 
+    end)
+    if ok and res and res ~= "" then return res end
+
+    -- Método 3: http_request / syn.request / request
+    if http_request then
+        ok, res = pcall(function() return http_request({Url = url, Method = "GET"}).Body end)
+        if ok and res then return res end
+    end
+    if syn and syn.request then
+        ok, res = pcall(function() return syn.request({Url = url, Method = "GET"}).Body end)
+        if ok and res then return res end
+    end
+    if request then
+        ok, res = pcall(function() return request({Url = url, Method = "GET"}).Body end)
+        if ok and res then return res end
+    end
+
+    return nil
+end
 
 local success = false
 local errorMsg = ""
 
-pcall(function()
+local pcallSuccess, pcallError = pcall(function()
     if _G.YinYang then
         print("✅ Yin Yang ya está cargado")
         success = true
@@ -19,21 +52,50 @@ pcall(function()
     end
     
     print("📥 Descargando librería Yin Yang desde GitHub...")
-    local HttpService = game:GetService("HttpService")
-    
     local url = "https://raw.githubusercontent.com/Moliinier/Yin-yang/refs/heads/main/Yin_Yang_v23_COMPLETO.lua"
-    local code = HttpService:GetAsync(url)
+    local code = httpGet(url)
     
-    loadstring(code)()
+    if not code then
+        errorMsg = "No se pudo descargar el código (httpGet retornó nil). Verifica que tu executor tenga internet/http habilitado."
+        success = false
+        return
+    end
+
+    -- Compatibilidad con loadstring
+    local loadFunc = loadstring or load
+    if not loadFunc then
+        errorMsg = "Tu executor no tiene loadstring/load"
+        success = false
+        return
+    end
+
+    local func, loadErr = loadFunc(code)
+    if not func then
+        errorMsg = "Error al compilar librería: " .. tostring(loadErr)
+        success = false
+        return
+    end
+    
+    local execOk, execErr = pcall(func)
+    if not execOk then
+        errorMsg = "Error al ejecutar librería: " .. tostring(execErr)
+        success = false
+        return
+    end
     
     if _G.YinYang then
         print("✅ Yin Yang cargado exitosamente desde GitHub")
         success = true
     else
-        errorMsg = "YinYang no se inicializó"
+        errorMsg = "YinYang no se inicializó en _G"
         success = false
     end
 end)
+
+if not pcallSuccess then
+    warn("❌ Error crítico en la carga: " .. tostring(pcallError))
+    return
+end
 
 if not success then
     warn("❌ Error al cargar Yin Yang: " .. tostring(errorMsg))
@@ -49,11 +111,22 @@ local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 local RunService = game:GetService("RunService")
 
+-- Verificar si Drawing existe (muchos executors móviles NO lo tienen)
+local hasDrawing = pcall(function() return Drawing.new end) and Drawing ~= nil
+if not hasDrawing then
+    warn("⚠️ Tu executor no soporta Drawing API. Las cajas 3D (ShowBoxes) estarán desactivadas, solo funcionará el ESP de Billboard.")
+end
+
 --// ════════════════════════════════════════════════════════════
 --// 3. CREAR UI CON YIN YANG
 --// ════════════════════════════════════════════════════════════
 
 local YinYang = _G.YinYang
+if not YinYang or not YinYang.CreateWindow then
+    warn("❌ _G.YinYang existe pero no tiene CreateWindow. La librería puede estar desactualizada.")
+    return
+end
+
 local UI = YinYang:CreateWindow("EVADE ESP", "Dark")
 
 --// ════════════════════════════════════════════════════════════
@@ -92,8 +165,12 @@ local function getTeam(player)
 end
 
 local function worldToViewport(position)
-    local viewport = Camera:WorldToViewportPoint(position)
-    return Vector2.new(viewport.X, viewport.Y), viewport.Z
+    local viewportPos, onScreen = Camera:WorldToViewportPoint(Camera, position)
+    -- Compatibilidad: algunos devuelven Vector3, otros Vector2 + bool
+    if typeof(viewportPos) == "Vector3" then
+        return Vector2.new(viewportPos.X, viewportPos.Y), viewportPos.Z
+    end
+    return Vector2.new(viewportPos.X, viewportPos.Y), onScreen and 1 or -1
 end
 
 local function createOrUpdateESPLabel(player)
@@ -102,7 +179,7 @@ local function createOrUpdateESPLabel(player)
     end
 
     local character = player.Character
-    local humanoid = character:FindFirstChild("Humanoid")
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
     local rootPart = character:FindFirstChild("HumanoidRootPart")
 
     if not humanoid or not rootPart then
@@ -117,6 +194,7 @@ local function createOrUpdateESPLabel(player)
         billboard.Size = UDim2.new(4, 0, 2, 0)
         billboard.MaxDistance = ESPConfig.Distance
         billboard.StudsOffset = Vector3.new(0, 3, 0)
+        billboard.AlwaysOnTop = true
         billboard.Adornee = rootPart
         billboard.Parent = character
     end
@@ -146,10 +224,6 @@ local function createOrUpdateESPLabel(player)
         NameLabel.Text = player.Name
         NameLabel.TextScaled = true
         NameLabel.Parent = Frame
-
-        local Corner = Instance.new("UICorner")
-        Corner.CornerRadius = UDim.new(0, 4)
-        Corner.Parent = NameLabel
     end
 
     --// DISTANCIA
@@ -168,13 +242,12 @@ local function createOrUpdateESPLabel(player)
         DistanceLabel.Parent = Frame
     end
 
-    --// SALUD (si tiene humanoid)
+    --// SALUD
     if ESPConfig.ShowHealth and humanoid then
         local health = math.floor(humanoid.Health)
         local maxHealth = math.floor(humanoid.MaxHealth)
         local healthPercent = (humanoid.Health / humanoid.MaxHealth) * 100
 
-        --// BARRA DE SALUD
         local HealthBar = Instance.new("Frame")
         HealthBar.Name = "HealthBar"
         HealthBar.Size = UDim2.new(0.3, 0, 0, 4)
@@ -206,18 +279,13 @@ local function createOrUpdateESPLabel(player)
 end
 
 local function drawBox(player)
-    if not player or not player.Character then
-        return
-    end
+    if not hasDrawing then return end
+    if not player or not player.Character then return end
 
     local character = player.Character
     local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return end
 
-    if not humanoidRootPart then
-        return
-    end
-
-    --// CREAR CUADRADO 3D USANDO LÍNEAS
     local size = Vector3.new(2, 3, 1)
     local corners = {
         humanoidRootPart.Position + Vector3.new(-size.X/2, -size.Y/2, -size.Z/2),
@@ -230,11 +298,10 @@ local function drawBox(player)
         humanoidRootPart.Position + Vector3.new(-size.X/2, size.Y/2, size.Z/2),
     }
 
-    --// CONECTAR ESQUINAS
     local edges = {
-        {1, 2}, {2, 3}, {3, 4}, {4, 1},  -- Base inferior
-        {5, 6}, {6, 7}, {7, 8}, {8, 5},  -- Base superior
-        {1, 5}, {2, 6}, {3, 7}, {4, 8},  -- Vertical
+        {1, 2}, {2, 3}, {3, 4}, {4, 1},
+        {5, 6}, {6, 7}, {7, 8}, {8, 5},
+        {1, 5}, {2, 6}, {3, 7}, {4, 8},
     }
 
     for _, edge in ipairs(edges) do
@@ -243,32 +310,29 @@ local function drawBox(player)
         local v2, z2 = worldToViewport(p2)
 
         if z1 > 0 and z2 > 0 then
-            local line = Drawing.new("Line")
-            line.From = v1
-            line.To = v2
-            line.Color = Color3.fromRGB(0, 150, 255)
-            line.Thickness = 1.5
-            line.Transparency = 0.8
-            line.Visible = true
-
-            table.insert(ESPObjects, line)
+            local ok, line = pcall(function() return Drawing.new("Line") end)
+            if ok and line then
+                line.From = v1
+                line.To = v2
+                line.Color = Color3.fromRGB(0, 150, 255)
+                line.Thickness = 1.5
+                line.Transparency = 0.8
+                line.Visible = true
+                table.insert(ESPObjects, line)
+            end
         end
     end
 end
 
 local function updateESP()
-    if not ESPConfig.Enabled then
-        return
-    end
+    if not ESPConfig.Enabled then return end
 
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
-            --// TEAM CHECK
             if ESPConfig.TeamCheck and getTeam(player) == getTeam(LocalPlayer) then
                 goto continue
             end
 
-            --// DISTANCIA CHECK
             if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
                 local distance = (Camera.CFrame.Position - player.Character.HumanoidRootPart.Position).Magnitude
                 if distance > ESPConfig.Distance then
@@ -276,12 +340,11 @@ local function updateESP()
                 end
             end
 
-            --// CREAR O ACTUALIZAR ESP
             if ESPConfig.ShowNames or ESPConfig.ShowDistance or ESPConfig.ShowHealth then
                 createOrUpdateESPLabel(player)
             end
 
-            if ESPConfig.ShowBoxes then
+            if ESPConfig.ShowBoxes and hasDrawing then
                 drawBox(player)
             end
 
@@ -294,6 +357,7 @@ local function clearAllESP()
     for _, obj in ipairs(ESPObjects) do
         if obj then
             pcall(function() obj:Remove() end)
+            pcall(function() obj.Visible = false end)
         end
     end
     ESPObjects = {}
@@ -323,8 +387,8 @@ ESPTab:CreateToggle("Mostrar nombres", true, function(state)
     ESPConfig.ShowNames = state
 end)
 
-ESPTab:CreateToggle("Mostrar cajas", true, function(state)
-    ESPConfig.ShowBoxes = state
+ESPTab:CreateToggle("Mostrar cajas (requiere Drawing)", true, function(state)
+    ESPConfig.ShowBoxes = state and hasDrawing
 end)
 
 ESPTab:CreateToggle("Mostrar distancia", true, function(state)
@@ -341,7 +405,6 @@ end)
 
 ESPTab:CreateLabel("Configuración", 14)
 ESPTab:CreateDivider()
-
 ESPTab:CreateLabel("Distancia máxima: " .. ESPConfig.Distance .. "m", 12)
 
 ESPTab:CreateButton("Limpiar ESP", function()
@@ -351,7 +414,8 @@ end)
 
 ESPTab:CreateButton("Recargar script", function()
     print("🔄 Recargando...")
-    script:Destroy()
+    clearAllESP()
+    if script then script:Destroy() end
 end)
 
 --// ════════════════════════════════════════════════════════════
@@ -359,16 +423,12 @@ end)
 --// ════════════════════════════════════════════════════════════
 
 local InfoTab = UI:CreateTab("ℹ️ Info")
-
 InfoTab:CreateLabel("Información del Script", 14)
 InfoTab:CreateDivider()
-
-InfoTab:CreateLabel("Script: Evade ESP v1.0", 12)
+InfoTab:CreateLabel("Script: Evade ESP v1.0 FIXED", 12)
 InfoTab:CreateLabel("Librería: Yin Yang v23", 12)
 InfoTab:CreateLabel("Features: ESP, Nombres, Distancia, Salud", 12)
-
 InfoTab:CreateDivider()
-
 InfoTab:CreateButton("Test ESP", function()
     ESPConfig.Enabled = not ESPConfig.Enabled
     print("ESP: " .. (ESPConfig.Enabled and "ON ✅" or "OFF ❌"))
@@ -381,21 +441,15 @@ end)
 local connection
 connection = RunService.RenderStepped:Connect(function()
     if ESPConfig.Enabled then
-        --// LIMPIAR OBJETOS ANTIGUOS
         for i = #ESPObjects, 1, -1 do
-            if not ESPObjects[i] or not ESPObjects[i].Visible then
-                table.remove(ESPObjects, i)
+            if ESPObjects[i] then
+                pcall(function() ESPObjects[i]:Remove() end)
             end
+            table.remove(ESPObjects, i)
         end
-
-        --// ACTUALIZAR ESP
         pcall(updateESP)
     end
 end)
-
---// ════════════════════════════════════════════════════════════
---// 9. CLEANUP AL DESCONECTARSE
---// ════════════════════════════════════════════════════════════
 
 Players.PlayerRemoving:Connect(function(player)
     if player.Character then
@@ -406,14 +460,9 @@ Players.PlayerRemoving:Connect(function(player)
     end
 end)
 
---// ════════════════════════════════════════════════════════════
---// 10. NOTIFICACIÓN
---// ════════════════════════════════════════════════════════════
-
 print("═══════════════════════════════════════════════════════════")
-print("✅ EVADE ESP CON YIN YANG v23 CARGADO")
+print("✅ EVADE ESP CON YIN YANG v23 CARGADO - FIXED")
 print("═══════════════════════════════════════════════════════════")
 print("👁️  Abre la UI (botón flotante con Yin-Yang)")
-print("📍 Ve a la tab 'ESP' para activar/desactivar")
-print("⚙️  Personaliza las opciones según necesites")
+print("Drawing soportado: " .. tostring(hasDrawing))
 print("═══════════════════════════════════════════════════════════")
