@@ -1,4 +1,4 @@
-# 📖 Yin Yang UI v21 - Guía de Uso para Scripters
+# 📖 Yin Yang UI v22 - Guía de Uso para Scripters
 
 ## 🚀 Inicio Rápido
 
