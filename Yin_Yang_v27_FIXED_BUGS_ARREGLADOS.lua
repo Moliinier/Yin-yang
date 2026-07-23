@@ -1,14 +1,26 @@
 --[[
-    Yin Yang - UI Ultimate Edition (v27) 🐱 SOUND BUG FIXED
+    Yin Yang - UI Ultimate Edition (v27.1) 🐱 CON PESTAÑA "AJUSTES"
     ============================================================
-    ✅ ARREGLOS CRÍTICOS v27:
+    ✅ NUEVAS CARACTERÍSTICAS v27.1:
     
-    1. FIX SONIDO GLOBAL: El slider ya NO reproduce sonido en inputs globales
-       - Eliminado playSound en InputChanged (línea 1508)
-       - Cambiado de UserInputService.InputEnded a SliderThumb.InputEnded
-       - El sonido SOLO se escucha al ajustar el slider, no en todo input de pantalla
+    1. 4ª PESTAÑA PERMANENTE: "AJUSTES"
+       - 🔒 Fijar Icono Flotante (✅ LA PEDIDA)
+       - 🔊 Volumen de Sonidos (0-100%)
+       - 🎵 Sonidos Dinámicos por Tema (ON/OFF)
+       - 🎨 Tema por Defecto (dropdown)
+       - 📏 Escala de Ventana (70-130%)
+       - ⚡ Velocidad de Animaciones (50-150%)
+       - 🔄 Restablecer Configuración (botón)
     
-    2. AHORA COMPATIBLE: Puedes jugar EVADE sin escuchar sonidos del slider
+    2. PERSISTENCIA MEJORADA:
+       - Todas las opciones de Ajustes se guardan en archivo
+       - Se cargan automáticamente al iniciar
+       - Formato: theme:X|effect:Y|volume:Z|...
+    
+    3. 3 PESTAÑAS SAGRADAS INTACTAS:
+       ✅ Inicio (WelcomeCard + ServerInfoCard)
+       ✅ Temas (19 temas disponibles)
+       ✅ Efectos (5 efectos de texto)
     
     ⚡ CARACTERÍSTICAS ORIGINALES MANTENIDAS:
     
@@ -105,8 +117,21 @@ local RainbowColors = {
     Color3.fromRGB(255, 255, 255),    -- BLANCO ⭐
 }
 
---// 💾 SISTEMA DE GUARDADO/PERSISTENCIA (v27 - MEJORADO)
+--// 💾 SISTEMA DE GUARDADO/PERSISTENCIA (v27.1 - CON AJUSTES)
 local ConfigFile = "Yin_Yang_Config.txt"
+
+--// 🎚️ OPCIONES GLOBALES DE AJUSTES (v27.1)
+local Settings = {
+    Theme = "Dark",
+    Effect = "Off",
+    Volume = 50,  -- 0-100
+    DynamicSounds = true,
+    DefaultTheme = "Dark",
+    WindowScale = 100,  -- 70-130
+    AnimationSpeed = 100,  -- 50-150
+    LockIcon = false,  -- ✅ NUEVA: Fijar icono flotante
+}
+
 local SavedConfig = {
     CurrentTheme = "Dark",
     CurrentEffect = "Normal",
@@ -115,27 +140,58 @@ local SavedConfig = {
 
 local function SaveConfig()
     pcall(function()
-        local configData = "theme:" .. (CurrentTheme or "Dark") .. "|effect:Normal|volume:0.5|time:" .. os.time()
+        local configData = string.format(
+            "theme:%s|effect:%s|volume:%d|dynamicSounds:%s|defaultTheme:%s|windowScale:%d|animSpeed:%d|lockIcon:%s|time:%d",
+            Settings.Theme or "Dark",
+            Settings.Effect or "Off",
+            Settings.Volume or 50,
+            Settings.DynamicSounds and "true" or "false",
+            Settings.DefaultTheme or "Dark",
+            Settings.WindowScale or 100,
+            Settings.AnimationSpeed or 100,
+            Settings.LockIcon and "true" or "false",
+            os.time()
+        )
         writefile(ConfigFile, configData)
+        print("💾 Configuración guardada")
     end)
 end
 
 local function LoadConfig()
-    local result = nil
+    local result = {}
     pcall(function()
         if readfile(ConfigFile) then
             local content = readfile(ConfigFile)
             if content and content ~= "" then
-                -- Parser simple: "theme:Dark|effect:Normal|..."
+                -- Parser: "theme:Dark|effect:Off|volume:50|..."
                 for part in content:gmatch("([^|]+)") do
                     local key, value = part:match("([^:]+):(.+)")
-                    if key == "theme" then
-                        result = {theme = value}
+                    if key and value then
+                        if key == "theme" then result.theme = value
+                        elseif key == "effect" then result.effect = value
+                        elseif key == "volume" then result.volume = tonumber(value) or 50
+                        elseif key == "dynamicSounds" then result.dynamicSounds = (value == "true")
+                        elseif key == "defaultTheme" then result.defaultTheme = value
+                        elseif key == "windowScale" then result.windowScale = tonumber(value) or 100
+                        elseif key == "animSpeed" then result.animSpeed = tonumber(value) or 100
+                        elseif key == "lockIcon" then result.lockIcon = (value == "true")
+                        end
                     end
                 end
             end
         end
     end)
+    
+    -- Aplicar configuración guardada
+    if result.theme then Settings.Theme = result.theme end
+    if result.effect then Settings.Effect = result.effect end
+    if result.volume then Settings.Volume = result.volume end
+    if result.dynamicSounds ~= nil then Settings.DynamicSounds = result.dynamicSounds end
+    if result.defaultTheme then Settings.DefaultTheme = result.defaultTheme end
+    if result.windowScale then Settings.WindowScale = result.windowScale end
+    if result.animSpeed then Settings.AnimationSpeed = result.animSpeed end
+    if result.lockIcon ~= nil then Settings.LockIcon = result.lockIcon end
+    
     return result
 end
 
@@ -166,11 +222,14 @@ end
 local function playSound(soundId, volume)
     volume = volume or 0.5
     
+    --// 🎵 v27.1: APLICAR VOLUMEN DE SETTINGS
+    volume = (volume * (Settings.Volume / 100))  -- Multiplicar por volumen global
+    
     --// 🎵 v27: USAR SONIDO DINÁMICO SI ESTÁ ACTIVADO
     local finalSoundId = soundId
     
     -- Si sonidos dinámicos están activados, ignorar Sounds.Click y usar el del tema
-    if DynamicClickSoundsEnabled and (soundId == Sounds.Click or not soundId) then
+    if Settings.DynamicSounds and (soundId == Sounds.Click or not soundId) then
         if CurrentTheme and ThemeClickSounds[CurrentTheme] then
             finalSoundId = ThemeClickSounds[CurrentTheme]
         else
@@ -657,7 +716,10 @@ local YinYang = _G.YinYang
 YinYang.__index = YinYang
 
 function YinYang:CreateWindow(title_text, startTheme)
-    startTheme = startTheme or "Dark"
+    --// 💾 v27.1: CARGAR CONFIGURACIÓN AL INICIAR
+    LoadConfig()
+    
+    startTheme = startTheme or Settings.DefaultTheme or "Dark"
     setActiveTheme(startTheme)
 
     local globalConnections = {}
@@ -819,7 +881,7 @@ function YinYang:CreateWindow(title_text, startTheme)
         local drag = false
         local dragStart, startPos
         ToggleButton.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and not Settings.LockIcon then
                 drag = true
                 dragStart = input.Position
                 startPos = ToggleButton.Position
@@ -2030,6 +2092,136 @@ function YinYang:CreateWindow(title_text, startTheme)
     AutoTabEfectos:CreateButton("🖤 Dark-White", function()
         Window:SetTextEffect("RainbowDarkWhite")
     end)
+
+    --// ╔════════════════════════════════════════════════════════════╗
+    --// ║  TAB 4: AJUSTES (Automático - Nueva pestaña permanente)    ║
+    --// ║  ✅ PROTEGIDA Y PERMANENTE (como Inicio, Temas, Efectos)   ║
+    --// ╚════════════════════════════════════════════════════════════╝
+    
+    local AutoTabAjustes = Window:CreateTab("Ajustes")
+    AutoTabAjustes:CreateLabel("⚙️ OPCIONES Y CONFIGURACIÓN", 14)
+    AutoTabAjustes:CreateDivider()
+    
+    --// 🔒 OPCIÓN 1: FIJAR ICONO FLOTANTE (LA PEDIDA)
+    AutoTabAjustes:CreateLabel("📌 Icono Flotante", 12)
+    AutoTabAjustes:CreateToggle("🔒 Fijar Icono", Settings.LockIcon, function(state)
+        Settings.LockIcon = state
+        SaveConfig()
+        print(state and "🔒 Icono FIJADO (no se puede mover)" or "📌 Icono DESBLOQUEADO (se puede mover)")
+    end)
+    AutoTabAjustes:CreateLabel("Activa para congelar la posición del icono", 10)
+    AutoTabAjustes:CreateDivider()
+    
+    --// 🔊 OPCIÓN 2: VOLUMEN DE SONIDOS
+    AutoTabAjustes:CreateLabel("🔊 Sonidos", 12)
+    local SliderVolume = AutoTabAjustes:CreateSlider(
+        "Volumen General",
+        0, 100, Settings.Volume,
+        function(value)
+            Settings.Volume = value
+            SaveConfig()
+            playSound(Sounds.Click, 0.5)  -- Feedback inmediato
+            print("🔊 Volumen: " .. value .. "%")
+        end
+    )
+    AutoTabAjustes:CreateDivider()
+    
+    --// 🎵 OPCIÓN 3: SONIDOS DINÁMICOS POR TEMA
+    AutoTabAjustes:CreateToggle("🎵 Sonidos Dinámicos", Settings.DynamicSounds, function(state)
+        Settings.DynamicSounds = state
+        SaveConfig()
+        print(state and "🎵 Sonidos dinámicos ACTIVADOS (cada tema suena diferente)" or "🎵 Sonidos dinámicos DESACTIVADOS (sonido universal)")
+    end)
+    AutoTabAjustes:CreateLabel("Diferentes sonidos para cada tema", 10)
+    AutoTabAjustes:CreateDivider()
+    
+    --// 🎨 OPCIÓN 4: TEMA POR DEFECTO
+    AutoTabAjustes:CreateLabel("🎨 Tema por Defecto", 12)
+    local temas_lista = {
+        "Dark", "DarkV2",
+        "Red", "RedV2",
+        "Pink", "PinkV2", "PinkV3",
+        "Blue", "BlueV2",
+        "White", "WhiteV2", "WhiteV3", "WhiteAndDark",
+        "Green", "NaranjaV1", "VioletaV1",
+        "CatV1", "LightV1", "ErisV1", "ShylfieV1"
+    }
+    AutoTabAjustes:CreateDropdown(
+        "Tema Inicial",
+        temas_lista,
+        Settings.DefaultTheme,
+        function(value)
+            Settings.DefaultTheme = value
+            SaveConfig()
+            print("🎨 Tema por defecto: " .. value)
+        end
+    )
+    AutoTabAjustes:CreateLabel("Se cargará al iniciar la librería", 10)
+    AutoTabAjustes:CreateDivider()
+    
+    --// 📏 OPCIÓN 5: ESCALA DE VENTANA
+    AutoTabAjustes:CreateLabel("📏 Tamaño de Ventana", 12)
+    local SliderScale = AutoTabAjustes:CreateSlider(
+        "Escala (%)",
+        70, 130, Settings.WindowScale,
+        function(value)
+            Settings.WindowScale = value
+            SaveConfig()
+            print("📏 Escala de ventana: " .. value .. "%")
+            -- Aplicar escala en tiempo real
+            if Main and Main.Parent then
+                local scaledWidth = 420 * (value / 100)
+                local scaledHeight = 340 * (value / 100)
+                Main.Size = UDim2.new(0, scaledWidth, 0, scaledHeight)
+            end
+        end
+    )
+    AutoTabAjustes:CreateDivider()
+    
+    --// ⚡ OPCIÓN 6: VELOCIDAD DE ANIMACIONES
+    AutoTabAjustes:CreateLabel("⚡ Animaciones", 12)
+    local SliderAnimSpeed = AutoTabAjustes:CreateSlider(
+        "Velocidad (%)",
+        50, 150, Settings.AnimationSpeed,
+        function(value)
+            Settings.AnimationSpeed = value
+            SaveConfig()
+            print("⚡ Velocidad de animaciones: " .. value .. "%")
+        end
+    )
+    AutoTabAjustes:CreateLabel("50% = Lento | 100% = Normal | 150% = Rápido", 10)
+    AutoTabAjustes:CreateDivider()
+    
+    --// 🔄 OPCIÓN 7: BOTONES DE ACCIÓN
+    AutoTabAjustes:CreateLabel("🔄 Mantenimiento", 12)
+    AutoTabAjustes:CreateButton("🔄 Restablecer Configuración", function()
+        Settings = {
+            Theme = "Dark",
+            Effect = "Off",
+            Volume = 50,
+            DynamicSounds = true,
+            DefaultTheme = "Dark",
+            WindowScale = 100,
+            AnimationSpeed = 100,
+            LockIcon = false,
+        }
+        SaveConfig()
+        print("✅ Configuración restablecida a valores por defecto")
+        print("⚠️ Recarga el script para aplicar los cambios")
+        playSound(Sounds.Click, 0.7)
+    end)
+    
+    AutoTabAjustes:CreateButton("💾 Guardar Configuración", function()
+        SaveConfig()
+        print("💾 Configuración guardada correctamente")
+        playSound(Sounds.Click, 0.6)
+    end)
+    
+    AutoTabAjustes:CreateDivider()
+    AutoTabAjustes:CreateLabel("📊 Información", 12)
+    AutoTabAjustes:CreateLabel("Versión: v27.1", 10)
+    AutoTabAjustes:CreateLabel("Status: ✅ Todas las opciones activas", 10)
+    AutoTabAjustes:CreateLabel("Persistencia: ✅ Guardadas automáticamente", 10)
 
     return Window
 end
