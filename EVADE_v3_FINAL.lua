@@ -31,9 +31,6 @@ local Config = {
     EnableTeleportWalk = false,
     JumpHeight = 50,
     EnableEnhancedJump = false,
-    InstantRevive = false,
-    ReviveNearby = false,
-    SelfRevive = false,
 }
 
 local PlayerState = {
@@ -81,7 +78,7 @@ end)
 
 Tab:CreateSlider(
     "Teleport Movement Speed",
-    1, 20, 5,
+    1, 50, 5,
     function(value)
         Config.TeleportMovementSpeed = value
         print("⚡ Velocidad de teleport: " .. value)
@@ -105,29 +102,7 @@ Tab:CreateSlider(
 )
 
 --// ═════════════════════════════════════════════════════════════════════════════
---// SECCIÓN: REVIVE
---// ═════════════════════════════════════════════════════════════════════════════
 
-Tab:CreateDivider()
-Tab:CreateLabel("💚 SISTEMA DE REVIVE", 14)
-Tab:CreateDivider()
-
-Tab:CreateToggle("⚡ Instant Revive", false, function(state)
-    Config.InstantRevive = state
-    print(state and "✅ Instant Revive ACTIVADO" or "❌ Instant Revive DESACTIVADO")
-end)
-
-Tab:CreateToggle("👥 Revive Nearby", false, function(state)
-    Config.ReviveNearby = state
-    print(state and "✅ Revive Nearby ACTIVADO - Presiona E para revivir cercanos" or "❌ Revive Nearby DESACTIVADO")
-end)
-
-Tab:CreateToggle("🔄 Self Revive", false, function(state)
-    Config.SelfRevive = state
-    print(state and "✅ Self Revive ACTIVADO" or "❌ Self Revive DESACTIVADO")
-end)
-
-Tab:CreateDivider()
 
 print("\n✅ Todos los componentes agregados")
 
@@ -164,18 +139,7 @@ local function applyJumpHeight()
     hum.UseJumpPower = true
 end
 
-local function applySelfRevive()
-    if not Config.SelfRevive then return end
-    
-    local char = LocalPlayer.Character
-    if not char then return end
-    
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum or hum.Health > 0 then return end
-    
-    -- Auto-revive cuando la salud es 0
-    print("🔄 Auto Self-Revive activado...")
-end
+
 
 --// ═════════════════════════════════════════════════════════════════════════════
 --// LOOP PRINCIPAL
@@ -187,7 +151,6 @@ RunService.Heartbeat:Connect(function()
     pcall(function()
         applyTeleportWalk()
         applyJumpHeight()
-        applySelfRevive()
     end)
 end)
 
@@ -197,12 +160,9 @@ print(string.rep("═", 73))
 
 print("\n📊 OPCIONES IMPLEMENTADAS:")
 print("   ✅ Teleport Walk Mode")
-print("   ✅ Teleport Movement Speed")
+print("   ✅ Teleport Movement Speed (1-50) - MÁS RÁPIDO")
 print("   ✅ Enhanced Jump")
 print("   ✅ Jump Height (20-300)")
-print("   ✅ Instant Revive")
-print("   ✅ Revive Nearby")
-print("   ✅ Self Revive")
 
 print("\n💡 COMPATIBLE CON:")
 print("   ✅ Yin Yang v26.1 SOUND FIXED")
