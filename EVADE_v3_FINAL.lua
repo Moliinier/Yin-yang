@@ -102,7 +102,25 @@ Tab:CreateSlider(
 )
 
 --// ═════════════════════════════════════════════════════════════════════════════
+--// PESTAÑA: DISCORD
+--// ═════════════════════════════════════════════════════════════════════════════
 
+local TabDiscord = UI:CreateTab("Discord")
+
+TabDiscord:CreateLabel("Únete a nuestra comunidad", 14)
+TabDiscord:CreateDivider()
+
+TabDiscord:CreateButton("📋 Copiar Link de Discord", function()
+    local DiscordLink = "https://discord.gg/RQQdxZxhu"
+    setclipboard(DiscordLink)
+    print("✅ Link de Discord copiado al portapapeles!")
+    print("📋 Link: " .. DiscordLink)
+end)
+
+TabDiscord:CreateDivider()
+TabDiscord:CreateLabel("Pega el link en tu navegador", 11)
+
+--// ═════════════════════════════════════════════════════════════════════════════
 
 print("\n✅ Todos los componentes agregados")
 
