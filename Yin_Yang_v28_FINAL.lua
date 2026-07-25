@@ -75,6 +75,7 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local SoundService = game:GetService("SoundService")
 local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
 pcall(function()
@@ -2758,6 +2759,81 @@ function YinYang:CreateWindow(title_text, startTheme)
     	return ("rbxthumb://type=AvatarHeadShot&id=%d&w=48&h=48"):format(userId)
     end
 
+    --// ═════════════════════════════════════════════════════════════════════
+    --// CHAT GLOBAL BACKEND SYNC (v28 - Tiempo Real)
+    --// ═════════════════════════════════════════════════════════════════════
+    --// Backend: Node.js + Express corriendo en Replit
+    --// Sincroniza mensajes entre TODOS los jugadores conectados
+    --// ═════════════════════════════════════════════════════════════════════
+
+    local BACKEND_URL = "https://global-chat-sync--tomasmichi13.replit.app"
+    local ChatSyncPollRate = 2  -- segundos entre cada consulta al backend
+    local knownServerIds = {}   -- IDs de mensajes de servidor ya renderizados
+    local backendConnected = false
+
+    --// Enviar mensaje al backend (no bloqueante)
+    local function BackendSendMessage(playerName, playerId, message)
+        --// JSONEncode AFUERA del spawn (no puede hacerse dentro del thread)
+        local body = HttpService:JSONEncode({
+            playerName = tostring(playerName),
+            playerId = tostring(playerId),
+            message = tostring(message),
+        })
+        
+        task.spawn(function()
+            local ok, result = pcall(function()
+                return HttpService:PostAsync(
+                    BACKEND_URL .. "/api/chat/send",
+                    body,
+                    Enum.HttpContentType.ApplicationJson
+                )
+            end)
+
+            if not ok then
+                warn("[ChatGlobal] Error al enviar mensaje al backend:", result)
+            end
+        end)
+    end
+
+    --// Polling: pide mensajes nuevos cada ChatSyncPollRate segundos
+    --// Se conecta después de crear el ChatTab (usa RenderMessage y AddChatMessage)
+    local function StartBackendPolling(onNewMessage)
+        task.spawn(function()
+            while true do
+                local ok, result = pcall(function()
+                    return HttpService:GetAsync(BACKEND_URL .. "/api/chat/messages")
+                end)
+
+                if ok then
+                    local success, data = pcall(HttpService.JSONDecode, HttpService, result)
+                    if success and data and data.messages then
+                        if not backendConnected then
+                            backendConnected = true
+                            print("[ChatGlobal] Conectado al backend correctamente")
+                        end
+
+                        for _, msg in ipairs(data.messages) do
+                            if not knownServerIds[msg.id] then
+                                knownServerIds[msg.id] = true
+                                -- Evitar re-mostrar el mensaje que YO mismo envié
+                                if tostring(msg.playerId) ~= tostring(LocalPlayer.UserId) then
+                                    task.spawn(onNewMessage, msg)
+                                end
+                            end
+                        end
+                    end
+                else
+                    if backendConnected then
+                        warn("[ChatGlobal] Se perdió conexión con el backend:", result)
+                    end
+                    backendConnected = false
+                end
+
+                task.wait(ChatSyncPollRate)
+            end
+        end)
+    end
+
     local ChatTab = Window:CreateTab("Chat", "rbxassetid://105823588527532")
     local ChatTabPage = ChatTab.Page
     
@@ -2815,9 +2891,84 @@ function YinYang:CreateWindow(title_text, startTheme)
     	ZIndex = 11,
     })
 
+    --// ✨ CONTADOR DE USUARIOS ONLINE (Verde pequeño) + OFFLINE (Gris pequeño)
+    local OnlineCounterFrame = mk("Frame", {
+    	Parent = ChatHeader,
+    	Size = UDim2.new(0, 55, 0, 18),
+    	Position = UDim2.new(1, -120, 0, 10),
+    	BackgroundColor3 = Color3.fromRGB(34, 197, 94),  -- Verde profesional
+    	BorderSizePixel = 0,
+    	ZIndex = 12,
+    })
+    corner(OnlineCounterFrame, 6)
+
+    local OnlineCounterLabel = mk("TextLabel", {
+    	Parent = OnlineCounterFrame,
+    	Size = UDim2.new(1, 0, 1, 0),
+    	BackgroundTransparency = 1,
+    	Text = "🟢 0",
+    	Font = Enum.Font.GothamBold,
+    	TextSize = 10,
+    	TextColor3 = Color3.fromRGB(255, 255, 255),
+    	ZIndex = 12,
+    })
+
+    local OfflineCounterFrame = mk("Frame", {
+    	Parent = ChatHeader,
+    	Size = UDim2.new(0, 55, 0, 18),
+    	Position = UDim2.new(1, -182, 0, 10),
+    	BackgroundColor3 = Color3.fromRGB(107, 114, 128),  -- Gris profesional
+    	BorderSizePixel = 0,
+    	ZIndex = 12,
+    })
+    corner(OfflineCounterFrame, 6)
+
+    local OfflineCounterLabel = mk("TextLabel", {
+    	Parent = OfflineCounterFrame,
+    	Size = UDim2.new(1, 0, 1, 0),
+    	BackgroundTransparency = 1,
+    	Text = "⚫ 0",
+    	Font = Enum.Font.GothamBold,
+    	TextSize = 10,
+    	TextColor3 = Color3.fromRGB(255, 255, 255),
+    	ZIndex = 12,
+    })
+
+    --// Actualizar contadores cada 20 segundos desde el backend
+    local LastPlayerCount = 0
+    local function UpdatePlayerCounts()
+    	task.spawn(function()
+    		while true do
+    			task.wait(20)  -- Actualizar cada 20 segundos
+    			
+    			local success, response = pcall(function()
+    				return HttpService:GetAsync(BACKEND_URL .. "/api/chat/players")
+    			end)
+    			
+    			if success and response then
+    				local data = HttpService:JSONDecode(response)
+    				local onlineCount = data.onlineCount or 0
+    				local totalPlayers = #(data.players or {})
+    				local offlineCount = math.max(0, totalPlayers - onlineCount)
+    				
+    				OnlineCounterLabel.Text = "🟢 " .. tostring(onlineCount)
+    				OfflineCounterLabel.Text = "⚫ " .. tostring(offlineCount)
+    				LastPlayerCount = onlineCount
+    			end
+    		end
+    	end)
+    end
+    
+    UpdatePlayerCounts()
+    
+    --// Guardar referencias para acceso externo
+    Window.OnlineCounterLabel = OnlineCounterLabel
+    Window.OfflineCounterLabel = OfflineCounterLabel
+
+
     local ChatContainer = mk("ScrollingFrame", {
     	Parent = ChatRoot,
-    	Size = UDim2.new(1, 0, 1, -54),
+    	Size = UDim2.new(1, 0, 1, -94),
     	Position = UDim2.new(0, 0, 0, 50),
     	BackgroundColor3 = Theme.Background,
     	BackgroundTransparency = 0.8,
@@ -2882,7 +3033,7 @@ function YinYang:CreateWindow(title_text, startTheme)
     	Position = UDim2.new(1, -68, 0.5, -18),
     	BackgroundColor3 = Theme.Accent,
     	BorderSizePixel = 0,
-    	Text = "✈️",
+    	Text = "",
     	TextColor3 = Color3.fromRGB(255, 255, 255),
     	Font = Enum.Font.GothamBold,
     	TextSize = 16,
@@ -2890,6 +3041,18 @@ function YinYang:CreateWindow(title_text, startTheme)
     })
     SendButton:SetAttribute("ThemeRole", "Accent")
     corner(SendButton, 8)
+    
+    --// Icono de envío blanco (asset 132362297660069)
+    local SendIcon = mk("ImageLabel", {
+    	Parent = SendButton,
+    	Size = UDim2.new(0, 24, 0, 24),
+    	Position = UDim2.new(0.5, -12, 0.5, -12),
+    	Image = "rbxassetid://132362297660069",
+    	ImageColor3 = Color3.fromRGB(255, 255, 255),
+    	BackgroundTransparency = 1,
+    	BorderSizePixel = 0,
+    	ZIndex = 22,
+    })
 
     local CharLabel = mk("TextLabel", {
     	Parent = ChatFooter,
@@ -2978,6 +3141,94 @@ function YinYang:CreateWindow(title_text, startTheme)
     	ScrollChatToBottom()
     end
 
+    --// ✨ INDICADOR DE "ESCRIBIENDO" (Tipo WhatsApp)
+    local TypingIndicators = {}  -- Tabla para rastrear indicadores activos
+    
+    local function ShowTypingIndicator(playerName, userId, duration)
+    	duration = duration or 3  -- Mostrar por 3 segundos por defecto
+    	
+    	-- Si ya existe un indicador para este jugador, removelo primero
+    	if TypingIndicators[userId] then
+    		task.cancel(TypingIndicators[userId])
+    		TypingIndicators[userId] = nil
+    	end
+    	
+    	local TypingFrame = mk("Frame", {
+    		Parent = ChatContainer,
+    		Size = UDim2.new(1, 0, 0, 0),
+    		AutomaticSize = Enum.AutomaticSize.Y,
+    		BackgroundColor3 = Theme.Secondary,
+    		BackgroundTransparency = 0.25,
+    		BorderSizePixel = 0,
+    		ZIndex = 12,
+    	})
+    	corner(TypingFrame, 8)
+    	
+    	local AvatarLabel = mk("ImageLabel", {
+    		Parent = TypingFrame,
+    		Size = UDim2.new(0, 32, 0, 32),
+    		Position = UDim2.new(0, 8, 0, 8),
+    		BackgroundColor3 = Theme.AccentOff,
+    		BorderSizePixel = 0,
+    		Image = GetPlayerAvatar(userId),
+    		ScaleType = Enum.ScaleType.Crop,
+    		ZIndex = 13,
+    	})
+    	corner(AvatarLabel, 16)
+    	
+    	local NameLabel = mk("TextLabel", {
+    		Parent = TypingFrame,
+    		Size = UDim2.new(1, -56, 0, 16),
+    		Position = UDim2.new(0, 48, 0, 8),
+    		BackgroundTransparency = 1,
+    		Text = playerName .. " está escribiendo...",
+    		Font = Enum.Font.GothamBold,
+    		TextSize = 12,
+    		TextColor3 = Theme.Accent,
+    		TextXAlignment = Enum.TextXAlignment.Left,
+    		ZIndex = 13,
+    	})
+    	
+    	local DotsLabel = mk("TextLabel", {
+    		Parent = TypingFrame,
+    		Size = UDim2.new(1, -56, 0, 20),
+    		Position = UDim2.new(0, 48, 0, 28),
+    		BackgroundTransparency = 1,
+    		Text = "● ● ●",
+    		Font = Enum.Font.Gotham,
+    		TextSize = 11,
+    		TextColor3 = Theme.TextDim,
+    		TextXAlignment = Enum.TextXAlignment.Left,
+    		ZIndex = 13,
+    	})
+    	
+    	--// Animación de puntos
+    	local dotIndex = 0
+    	local animationTask = task.spawn(function()
+    		while TypingFrame.Parent do
+    			dotIndex = (dotIndex + 1) % 4
+    			local dots = {" ● ● ●", "● ● ●", "● ● ", "● "}
+    			DotsLabel.Text = dots[dotIndex + 1] or "● ● ●"
+    			task.wait(0.5)
+    		end
+    	end)
+    	
+    	--// Remover después de duration segundos
+    	TypingIndicators[userId] = task.spawn(function()
+    		task.wait(duration)
+    		if TypingFrame and TypingFrame.Parent then
+    			TypingFrame:Destroy()
+    		end
+    		TypingIndicators[userId] = nil
+    		task.cancel(animationTask)
+    	end)
+    	
+    	ScrollChatToBottom()
+    end
+    
+    --// Guardar referencia para acceso externo
+    Window.ShowTypingIndicator = ShowTypingIndicator
+
     local function SendMessage()
     	local messageText = MessageInput.Text or ""
     	messageText = messageText:sub(1, MAX_CHAR)
@@ -2991,6 +3242,9 @@ function YinYang:CreateWindow(title_text, startTheme)
 
     	AddChatMessage(localPlayer.Name, localPlayer.UserId, messageText, timestamp)
     	RenderMessage(localPlayer.Name, localPlayer.UserId, messageText, timestamp, true)
+
+    	-- Sincronizar con el backend para que otros jugadores lo reciban
+    	BackendSendMessage(localPlayer.Name, localPlayer.UserId, messageText)
 
     	MessageInput.Text = ""
     	CharLabel.Text = "0 / 500"
@@ -3041,7 +3295,49 @@ function YinYang:CreateWindow(title_text, startTheme)
     Window.AddChatMessage = AddChatMessage
     Window.RenderChatMessage = RenderMessage
     Window.SendMessage = SendMessage
+
+    --// Iniciar sincronización en tiempo real con el backend
+    --// Cada mensaje nuevo de OTRO jugador se agrega y renderiza automáticamente
+    StartBackendPolling(function(msg)
+        AddChatMessage(msg.playerName, msg.playerId, msg.message, os.date("%H:%M:%S", msg.timestamp))
+        RenderMessage(msg.playerName, msg.playerId, msg.message, os.date("%H:%M:%S", msg.timestamp), false)
+    end)
+
+    --// ❤️ HEARTBEAT: Mantener usuario activo en el backend (Cada 3 segundos)
+    local function StartHeartbeat()
+    	task.spawn(function()
+    		while true do
+    			task.wait(3)  -- Cada 3 segundos
+    			
+    			local localPlayer = Players.LocalPlayer
+    			
+    			--// JSONEncode AFUERA del pcall (no puede hacerse dentro de pcall de PostAsync)
+    			local ok, body = pcall(function()
+    				return HttpService:JSONEncode({
+    					playerName = localPlayer.Name,
+    					playerId = tostring(localPlayer.UserId)
+    				})
+    			end)
+    			
+    			if ok then
+    				local success = pcall(function()
+    					HttpService:PostAsync(
+    						BACKEND_URL .. "/api/chat/heartbeat",
+    						body,
+    						Enum.HttpContentType.ApplicationJson
+    					)
+    				end)
+    				
+    				if not success then
+    					-- El heartbeat falló, pero continuamos
+    				end
+    			end
+    		end
+    	end)
+    end
     
+    StartHeartbeat()
+
     return Window
 
 end
