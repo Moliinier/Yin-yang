@@ -1,10 +1,18 @@
 --[[
-    Dara Trimp · standalone (v1)
-    Lógica copiada TAL CUAL de YinYang_V39_UnlockAll_v2.lua (líneas 3403-3540, bloque "Dara Trimp"):
-      · mismo hook a ReplicatedStorage.Objects.Game.Character.Client.Movement.Update
-      · mismos valores: MaxSpeed 99, SpeedAcceleration 9, SmoothAcceleration true, MovementType "Camera"
-      · misma tecla Q para prender/apagar con la notificación "Fake Trimp"
-    Lo único nuevo: mini ventana propia con un toggle y un botón ✕ que cierra todo
+    Dara Trimp 路 standalone (v2)
+
+    v2 路 arreglo del bug de PC (verificado con el Death Log en Solara, 2026-10-11):
+      En Solara, require() del m贸dulo Movement no devuelve el m贸dulo del juego: carga una COPIA
+      (tard贸 2,5 s). Esa copia deja servicios a medio iniciar y en el siguiente spawn
+      SharedUIService:69 falla y el personaje muere. Pasa con el require solo, sin hook.
+      路 Celular / executors con require normal: se usa la l贸gica ORIGINAL sin ning煤n cambio.
+      路 Solara: NUNCA se llama a require(). El Trimp empuja el personaje directo cada cuadro
+        (antes de la f铆sica), con la misma f贸rmula de velocidad, aceleraci贸n y direcci贸n.
+    L贸gica copiada TAL CUAL de YinYang_V39_UnlockAll_v2.lua (l铆neas 3403-3540, bloque "Dara Trimp"):
+      路 mismo hook a ReplicatedStorage.Objects.Game.Character.Client.Movement.Update
+      路 mismos valores: MaxSpeed 99, SpeedAcceleration 9, SmoothAcceleration true, MovementType "Camera"
+      路 misma tecla Q para prender/apagar con la notificaci贸n "Fake Trimp"
+    Lo 煤nico nuevo: mini ventana propia con un toggle y un bot贸n 鉁� que cierra todo
     (devuelve el Movement.Update original, desconecta la tecla Q y borra la ventana).
 ]]
 
@@ -14,13 +22,13 @@ local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
--- si se vuelve a ejecutar, primero se cierra la copia anterior (así el hook no queda duplicado)
+-- si se vuelve a ejecutar, primero se cierra la copia anterior (as铆 el hook no queda duplicado)
 local env = (typeof(getgenv) == "function" and getgenv()) or _G
 if type(env.DaraTrimpStandaloneClose) == "function" then
     pcall(env.DaraTrimpStandaloneClose)
 end
 
--- ==================== LÓGICA ORIGINAL (sin cambios) ====================
+-- ==================== L脫GICA ORIGINAL (sin cambios) ====================
 local FakeTrimp = {
     Enabled = false,
     MovementType = "Camera",
@@ -35,9 +43,23 @@ local currentSpeed = 0
 local currentDir = Vector3.new(1, 0, 0)
 local oldUpdate = nil
 
-local movementOk, Movement = pcall(function()
-    return require(ReplicatedStorage.Objects.Game.Character.Client.Movement)
+-- executors donde require() crea una copia del m贸dulo y mata al personaje en el pr贸ximo spawn
+local NO_REQUIRE_EXECUTORS = {"solara"}
+local executorName = ""
+pcall(function()
+    if typeof(identifyexecutor) == "function" then executorName = tostring(identifyexecutor()) end
 end)
+local safeMode = false
+for _, name in ipairs(NO_REQUIRE_EXECUTORS) do
+    if string.find(string.lower(executorName), name, 1, true) then safeMode = true end
+end
+
+local movementOk, Movement = false, nil
+if not safeMode then
+    movementOk, Movement = pcall(function()
+        return require(ReplicatedStorage.Objects.Game.Character.Client.Movement)
+    end)
+end
 local trimpReady = movementOk and type(Movement) == "table" and Movement.Update ~= nil
 
 local function FakeTimpUpdate(self, dt)
@@ -87,6 +109,50 @@ if trimpReady and not oldUpdate then
     Movement.Update = FakeTimpUpdate
 end
 
+-- ==================== MODO PC (Solara): sin require ====================
+-- Misma cuenta que FakeTimpUpdate, pero sin tocar el m贸dulo del juego: se aplica la velocidad
+-- horizontal al HumanoidRootPart en Stepped (antes de la f铆sica de ese cuadro). La vertical no se toca.
+local safeConnection = nil
+if safeMode then
+    trimpReady = true
+    safeConnection = game:GetService("RunService").Stepped:Connect(function(_, dt)
+        if not FakeTrimp.Enabled then
+            currentSpeed = 0
+            return
+        end
+        local character = LocalPlayer.Character
+        local hrp = character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if not hrp or not humanoid or humanoid.Health <= 0 then return end
+
+        local moveDir = Vector3.new()
+        if FakeTrimp.MovementType == "Camera" then
+            local cam = workspace.CurrentCamera
+            if cam then
+                local lookDir = cam.CFrame:VectorToWorldSpace(FakeTrimp.CameraDirection)
+                moveDir = Vector3.new(lookDir.X, 0, lookDir.Z).Unit
+            end
+        else
+            moveDir = humanoid.MoveDirection
+        end
+        if moveDir.Magnitude > 0 then
+            FakeTrimp.State.MoveDir = moveDir.Unit
+        end
+
+        currentDir = FakeTrimp.State.MoveDir
+        local targetSpeed = FakeTrimp.MaxSpeed * 90
+        if FakeTrimp.SmoothAcceleration then
+            currentSpeed = currentSpeed + (targetSpeed - currentSpeed) * math.min(FakeTrimp.SpeedAcceleration * dt, 1)
+        else
+            currentSpeed = targetSpeed
+        end
+
+        local newVelocity = currentDir * currentSpeed
+        local horizontal = Vector3.new(newVelocity.X, 0, newVelocity.Z) / 90
+        hrp.AssemblyLinearVelocity = Vector3.new(horizontal.X, hrp.AssemblyLinearVelocity.Y, horizontal.Z)
+    end)
+end
+
 -- ==================== MINI VENTANA ====================
 local C = {
     Bg = Color3.fromRGB(255, 255, 255), Field = Color3.fromRGB(242, 242, 246), Stroke = Color3.fromRGB(214, 214, 222),
@@ -123,11 +189,11 @@ corner(Window, 16)
 stroke(Window, C.Stroke, 0)
 local WindowScale = mk("UIScale", {Scale = 0.9, Parent = Window})
 
--- cabecera (se arrastra desde acá) con el ✕ en la esquina
+-- cabecera (se arrastra desde ac谩) con el 鉁� en la esquina
 local Header = mk("Frame", {Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1, Parent = Window})
 mk("TextLabel", {Size = UDim2.new(1, -56, 0, 18), Position = UDim2.fromOffset(14, 8), BackgroundTransparency = 1, Text = "Dara Trimp", TextColor3 = C.Text, Font = Enum.Font.GothamBlack, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, Parent = Header})
-local Status = mk("TextLabel", {Size = UDim2.new(1, -56, 0, 12), Position = UDim2.fromOffset(14, 25), BackgroundTransparency = 1, Text = trimpReady and "Tecla Q también lo prende" or "No disponible en este juego", TextColor3 = C.Dim, Font = Enum.Font.GothamMedium, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = Header})
-local CloseButton = mk("TextButton", {Size = UDim2.fromOffset(26, 26), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -8, 0, 8), BackgroundColor3 = C.Field, AutoButtonColor = false, Text = "✕", TextColor3 = C.Text, Font = Enum.Font.GothamBold, TextSize = 13, Parent = Window})
+local Status = mk("TextLabel", {Size = UDim2.new(1, -56, 0, 12), Position = UDim2.fromOffset(14, 25), BackgroundTransparency = 1, Text = not trimpReady and "No disponible en este juego" or (safeMode and "Modo PC (sin require) 路 tecla Q" or "Tecla Q tambi茅n lo prende"), TextColor3 = C.Dim, Font = Enum.Font.GothamMedium, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = Header})
+local CloseButton = mk("TextButton", {Size = UDim2.fromOffset(26, 26), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -8, 0, 8), BackgroundColor3 = C.Field, AutoButtonColor = false, Text = "鉁�", TextColor3 = C.Text, Font = Enum.Font.GothamBold, TextSize = 13, Parent = Window})
 corner(CloseButton, 999)
 stroke(CloseButton, C.Stroke, 0.2)
 
@@ -164,7 +230,7 @@ Row.MouseButton1Click:Connect(function()
     setEnabled(not FakeTrimp.Enabled)
 end)
 
--- tecla Q original (con su notificación)
+-- tecla Q original (con su notificaci贸n)
 table.insert(Connections, UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
     if input.KeyCode == Enum.KeyCode.Q then
@@ -180,7 +246,7 @@ table.insert(Connections, UserInputService.InputBegan:Connect(function(input, gp
     end
 end))
 
--- arrastrar desde la cabecera (mouse y táctil)
+-- arrastrar desde la cabecera (mouse y t谩ctil)
 do
     local dragging, dragStart, startPos = false, nil, nil
     Header.InputBegan:Connect(function(input)
@@ -201,7 +267,7 @@ do
     end))
 end
 
--- ✕: cierra por completo
+-- 鉁�: cierra por completo
 local closed = false
 local function closeAll()
     if closed then return end
@@ -209,9 +275,10 @@ local function closeAll()
     FakeTrimp.Enabled = false
     currentSpeed = 0
     -- se devuelve el Movement.Update original del juego (solo si sigue siendo el nuestro)
-    if trimpReady and oldUpdate and Movement.Update == FakeTimpUpdate then
+    if Movement and oldUpdate and Movement.Update == FakeTimpUpdate then
         Movement.Update = oldUpdate
     end
+    if safeConnection then safeConnection:Disconnect() end
     for _, connection in ipairs(Connections) do pcall(function() connection:Disconnect() end) end
     if env.DaraTrimpStandaloneClose == closeAll then env.DaraTrimpStandaloneClose = nil end
     if Gui.Parent then Gui:Destroy() end
