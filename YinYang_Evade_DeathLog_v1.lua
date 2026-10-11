@@ -1,5 +1,19 @@
 --[[
-    Death Log · Evade (v1)
+    Death Log · Evade (v3)
+
+    v3 (por el log del 2026-10-11: al reaparecer, CharacterService:195 → SharedUIService:69 falló
+    y 0,6 s después la vida bajó a 0):
+      · Marca en el log el momento exacto en que se ejecuta Dara Trimp (standalone), sin tocarlo:
+        solo mira si apareció su función de cierre en getgenv.
+      · Botón "Decompilar": guarda en Extraction/ el código de CharacterService, SharedUIService y
+        Movement (si tu executor tiene decompile), para ver qué hacen las líneas 195, 69 y 105.
+
+    v2 (porque con la v1 abierta Dara Trimp dejaba de andar y el bug no aparecía):
+      · MODO SILENCIOSO por defecto: NO instala ningún hook (hookmetamethod) ni hace require.
+        Solo escucha señales del juego (vida, estados, atributos, errores). Lo único invasivo de la v1
+        era el hook de remotes, que ahora es OPCIONAL (botón "Remotes: off").
+      · Nuevo: graba posición y velocidad de tu personaje cada cuadro (últimos 2 s) y las vuelca al morir,
+        para ver si la velocidad se dispara o se rompe justo antes.
     Consola para encontrar POR QUÉ el personaje muere al ejecutar Dara Trimp en PC.
     Se ejecuta ANTES del script. Arranca grabando solo. No cambia nada del juego por sí misma
     (salvo los botones de "Pruebas por pasos", que solo hacen algo si los tocás).
@@ -37,7 +51,7 @@ local LocalPlayer = Players.LocalPlayer
 local env = (typeof(getgenv) == "function" and getgenv()) or _G
 if env.DeathLogState then env.DeathLogState.alive = false end
 if type(env.DeathLogClose) == "function" then pcall(env.DeathLogClose) end
-local State = {alive = true, running = true, paused = false, remotes = true}
+local State = {alive = true, running = true, paused = false, remotes = false}
 env.DeathLogState = State
 
 local guiParent = LocalPlayer:WaitForChild("PlayerGui")
@@ -222,6 +236,73 @@ local function stepRestore()
     end
 end
 
+-- graba el movimiento (solo lee, no cambia nada)
+local motion = {} -- últimos 2 s de posición/velocidad de tu personaje
+local motionRoot = nil
+track(RunService.Heartbeat:Connect(function()
+    local root = motionRoot
+    if not root or not root.Parent then return end
+    local velocity = root.AssemblyLinearVelocity
+    table.insert(motion, {time = now(), velocity = velocity, speed = velocity.Magnitude, y = root.Position.Y})
+    local cutoff = now() - 2
+    while #motion > 0 and motion[1].time < cutoff do table.remove(motion, 1) end
+end))
+
+-- marca cuándo se ejecuta Dara Trimp (standalone deja su función de cierre en getgenv)
+local daraSeen = type(env.DaraTrimpStandaloneClose) == "function"
+local daraElapsed = 0
+track(RunService.Heartbeat:Connect(function(dt)
+    daraElapsed = daraElapsed + dt
+    if daraElapsed < 0.25 then return end
+    daraElapsed = 0
+    local present = type(env.DaraTrimpStandaloneClose) == "function"
+    if present ~= daraSeen then
+        daraSeen = present
+        push("movement", present and "▶ DARA TRIMP EJECUTADO (o vuelto a ejecutar)" or "■ Dara Trimp cerrado")
+    end
+end))
+
+-- decompila los módulos sospechosos y los guarda en Extraction/
+local SUSPECTS = {
+    {"Services", "Asset", "CharacterService"},
+    {"Services", "UI", "SharedUIService"},
+    {"Objects", "Game", "Character", "Client", "Movement"},
+}
+local decompiling = false
+local function decompileSuspects()
+    if decompiling then return end
+    if typeof(decompile) ~= "function" then
+        push("error", "Tu executor no tiene decompile()")
+        return
+    end
+    decompiling = true
+    task.spawn(function()
+        for _, path in ipairs(SUSPECTS) do
+            local node = ReplicatedStorage
+            for _, name in ipairs(path) do node = node and node:FindFirstChild(name) end
+            local label = "ReplicatedStorage." .. table.concat(path, ".")
+            if not node then
+                push("movement", "Decompilar · no existe " .. label)
+            else
+                push("movement", "Decompilar · " .. label .. " …")
+                task.wait(0.1)
+                local ok, source = pcall(decompile, node)
+                local text = ok and tostring(source) or ("-- error: " .. tostring(source))
+                local lineCount = select(2, text:gsub("\n", "")) + 1
+                local looksFailed = (not ok) or #text < 200 or text:sub(1, 40):lower():find("failed") ~= nil or text:sub(1, 60):lower():find("decompil") ~= nil and lineCount < 10
+                local fileName = "Extraction/Evade_" .. path[#path] .. ".lua"
+                pcall(function()
+                    if typeof(isfolder) == "function" and typeof(makefolder) == "function" and not isfolder("Extraction") then makefolder("Extraction") end
+                    writefile(fileName, text)
+                end)
+                push("movement", "Decompilar · " .. path[#path] .. ": " .. lineCount .. " líneas" .. (looksFailed and " ⚠ parece que FALLÓ" or " ✓") .. " → " .. fileName)
+            end
+            task.wait(0.2)
+        end
+        decompiling = false
+    end)
+end
+
 -- vigila si OTRO (por ejemplo Dara Trimp) reemplaza Update
 track(RunService.Heartbeat:Connect(function()
     if not Probe.watching or not Probe.module then return end
@@ -278,6 +359,16 @@ local function deathReport(character, humanoid, reason)
     local states = {}
     for i = math.max(1, #stateHistory - 6), #stateHistory do table.insert(states, stateHistory[i]) end
     table.insert(lines, "   estados: " .. (#states > 0 and table.concat(states, " → ") or "—"))
+    if #motion > 0 then
+        table.insert(lines, "   movimiento en los últimos 2 s (tiempo · velocidad · altura):")
+        local stepSize = math.max(1, math.floor(#motion / 12))
+        for i = 1, #motion, stepSize do
+            local sample = motion[i]
+            table.insert(lines, string.format("      %.2fs · vel %s (%s) · Y %s", sample.time, serialize(sample.velocity), round(sample.speed), round(sample.y)))
+        end
+        local last = motion[#motion]
+        table.insert(lines, string.format("      %.2fs · vel %s (%s) · Y %s  ← último", last.time, serialize(last.velocity), round(last.speed), round(last.y)))
+    end
     local updateInfo = "Paso 1 no hecho (no se sabe)"
     if Probe.module then
         updateInfo = (Probe.module.Update == Probe.original) and "ORIGINAL" or "REEMPLAZADO"
@@ -297,7 +388,8 @@ local function deathReport(character, humanoid, reason)
 end
 local function watchCharacter(character)
     clearCharConnections()
-    healthHistory, stateHistory = {}, {}
+    healthHistory, stateHistory, motion = {}, {}, {}
+    motionRoot = character:FindFirstChild("HumanoidRootPart") or character:WaitForChild("HumanoidRootPart", 10)
     push("state", "Personaje nuevo: " .. character.Name)
     local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", 10)
     if not humanoid then
@@ -363,7 +455,12 @@ local NOISE_LIMIT, NOISE_SUMMARY = 4, 5
 local Noise = {}
 local RemoteQueue = {}
 local hookOk = false
-if typeof(hookmetamethod) == "function" and typeof(getnamecallmethod) == "function" then
+local hookTried = false
+-- el hook de remotes solo se instala si tocás el botón "Remotes" (en la v1 se instalaba siempre)
+local function installRemoteHook()
+    if hookTried then return hookOk end
+    hookTried = true
+    if typeof(hookmetamethod) ~= "function" or typeof(getnamecallmethod) ~= "function" then return false end
     local wrap = (typeof(newcclosure) == "function") and newcclosure or function(f) return f end
     local fromExecutor = (typeof(checkcaller) == "function") and checkcaller or function() return false end
     local oldNamecall
@@ -382,6 +479,7 @@ if typeof(hookmetamethod) == "function" and typeof(getnamecallmethod) == "functi
         end))
     end)
     hookOk = ok and oldNamecall ~= nil
+    return hookOk
 end
 function processRemotes()
     if #RemoteQueue == 0 then return end
@@ -496,13 +594,14 @@ local PauseButton = rowButton(Bar, 2, 6, "Pausar")
 local StopButton = rowButton(Bar, 3, 6, "Detener")
 local ClearButton = rowButton(Bar, 4, 6, "Limpiar")
 local CopyButton = rowButton(Bar, 5, 6, "Copiar")
-local RemoteButton = rowButton(Bar, 6, 6, "Remotes ✓")
+local RemoteButton = rowButton(Bar, 6, 6, "Remotes: off")
 mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.fromOffset(12, 72), BackgroundTransparency = 1, Text = "PRUEBAS POR PASOS (opcional, sin el script)", TextColor3 = C.Dim, Font = Enum.Font.GothamBold, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, Parent = Window})
 local Steps = buttonRow(86)
-local Step1 = rowButton(Steps, 1, 4, "1 · Require", true)
-local Step2 = rowButton(Steps, 2, 4, "2 · Hook limpio", true)
-local Step3 = rowButton(Steps, 3, 4, "3 · Hook script", true)
-local Restore = rowButton(Steps, 4, 4, "↺ Restaurar")
+local Step1 = rowButton(Steps, 1, 5, "1 · Require", true)
+local Step2 = rowButton(Steps, 2, 5, "2 · Hook", true)
+local Step3 = rowButton(Steps, 3, 5, "3 · Script", true)
+local Restore = rowButton(Steps, 4, 5, "↺ Restaurar")
+local DecompileButton = rowButton(Steps, 5, 5, "Decompilar")
 
 local Log = mk("ScrollingFrame", {
     Size = UDim2.new(1, -20, 1, -146), Position = UDim2.fromOffset(10, 118), BackgroundColor3 = C.Field, BorderSizePixel = 0,
@@ -524,7 +623,7 @@ end
 
 local function setStatus()
     local mode = not State.running and "Detenido" or (State.paused and "En pausa" or "Grabando")
-    StatusText.Text = mode .. " · " .. #Lines .. " líneas · paso: " .. Probe.step .. (hookOk and "" or " · sin hook de remotes")
+    StatusText.Text = mode .. " · " .. #Lines .. " líneas · paso: " .. Probe.step .. (hookOk and " · hook de remotes ON" or " · modo silencioso")
     tween(StatusDot, 0.2, {BackgroundTransparency = (State.running and not State.paused) and 0 or 0.7})
 end
 
@@ -557,13 +656,23 @@ CopyButton.MouseButton1Click:Connect(function()
     Footer.Text = ok and ("Copiado: " .. #Lines .. " líneas") or "No se pudo copiar"
 end)
 RemoteButton.MouseButton1Click:Connect(function()
+    if not hookTried then
+        if not installRemoteHook() then
+            push("state", "No se pudo instalar el hook de remotes (el executor no tiene hookmetamethod)")
+            RemoteButton.Text = "Remotes: ✕"
+            return
+        end
+        push("state", "Hook de remotes INSTALADO (queda puesto hasta que salgas del servidor)")
+    end
     State.remotes = not State.remotes
-    RemoteButton.Text = State.remotes and "Remotes ✓" or "Remotes ✕"
+    RemoteButton.Text = State.remotes and "Remotes: on" or "Remotes: off"
+    setStatus()
 end)
 Step1.MouseButton1Click:Connect(function() stepRequire() setStatus() end)
 Step2.MouseButton1Click:Connect(function() stepCleanHook() setStatus() end)
 Step3.MouseButton1Click:Connect(function() stepScriptHook() setStatus() end)
 Restore.MouseButton1Click:Connect(function() stepRestore() setStatus() end)
+DecompileButton.MouseButton1Click:Connect(decompileSuspects)
 
 -- dibuja de a partes y guarda en vivo
 local drawElapsed, summaryElapsed = 0, 0
@@ -632,9 +741,9 @@ end
 env.DeathLogClose = closeAll
 CloseButton.MouseButton1Click:Connect(closeAll)
 
-push("state", "Death Log listo. Ahora ejecutá el script (o usá las pruebas por pasos) y esperá a morir.")
+push("state", "Death Log v2 listo en MODO SILENCIOSO. Ahora ejecutá el script y esperá a morir.")
 pcall(function()
     if typeof(identifyexecutor) == "function" then push("state", "Executor: " .. tostring(identifyexecutor())) end
 end)
-push("state", "Plataforma: " .. ((UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled) and "móvil" or "PC") .. (hookOk and "" or " · ⚠ sin hookmetamethod: no se ven los remotes"))
+push("state", "Plataforma: " .. ((UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled) and "móvil" or "PC") .. " · modo silencioso (sin hooks)")
 setStatus()
