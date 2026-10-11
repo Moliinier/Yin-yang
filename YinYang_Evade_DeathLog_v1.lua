@@ -1,5 +1,8 @@
 --[[
-    Death Log · Evade (v3)
+    Death Log · Evade (v4)
+
+    v4: al arrancar anota solo qué funciones tiene tu executor (getgc, filtergc, require, etc.),
+        así no hay que pegar código aparte. Arreglado el texto "v2 listo".
 
     v3 (por el log del 2026-10-11: al reaparecer, CharacterService:195 → SharedUIService:69 falló
     y 0,6 s después la vida bajó a 0):
@@ -741,7 +744,20 @@ end
 env.DeathLogClose = closeAll
 CloseButton.MouseButton1Click:Connect(closeAll)
 
-push("state", "Death Log v2 listo en MODO SILENCIOSO. Ahora ejecutá el script y esperá a morir.")
+push("state", "Death Log v4 listo en MODO SILENCIOSO. Ahora ejecutá el script y esperá a morir.")
+-- qué funciones tiene el executor (solo mira si existen, no las usa)
+do
+    local names = {"require", "getgc", "filtergc", "getloadedmodules", "getsenv", "getrenv", "hookfunction", "hookmetamethod", "decompile", "getscriptbytecode", "appendfile", "setclipboard"}
+    local executorEnv = getfenv()
+    local found = {}
+    for _, name in ipairs(names) do
+        local value = executorEnv[name]
+        if value == nil then value = env[name] end
+        table.insert(found, name .. "=" .. (type(value) == "function" and "SI" or "no"))
+    end
+    table.insert(found, "debug.info=" .. ((debug and type(debug.info) == "function") and "SI" or "no"))
+    push("state", "Funciones: " .. table.concat(found, " · "))
+end
 pcall(function()
     if typeof(identifyexecutor) == "function" then push("state", "Executor: " .. tostring(identifyexecutor())) end
 end)
